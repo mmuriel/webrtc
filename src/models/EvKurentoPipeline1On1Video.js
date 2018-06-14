@@ -133,12 +133,11 @@ class EvKurentoPipeline1On1Video{
                                 pl.release();
                                 return callback(error);
                             }
+							this._pipeline = pl;
+							this._WebRtcEndPoints[callee.uid] = calleeWebRtcEndPoint;
+							this._WebRtcEndPoints[caller.uid] = callerWebRtcEndPoint;
+							callback(null,this);
                         });
-
-                        this._pipeline = pl;
-                        this._WebRtcEndPoints[callee.uid] = calleeWebRtcEndPoint;
-                        this._WebRtcEndPoints[caller.uid] = callerWebRtcEndPoint;
-                        callback(null,this);
                     });
 				});
 
