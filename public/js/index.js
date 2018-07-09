@@ -20,7 +20,7 @@ import EvClientsDrawer from './classes/EvClientsDrawer';
 import EvClientCallStatus from './models/EvClientCallStatus';
 
 /* Import Modules */
-import evKurentoClient from './modules/EvKurentoClient';
+
 
 
 
@@ -29,8 +29,6 @@ import evKurentoClient from './modules/EvKurentoClient';
 */
 const cltCallStatus = new EvClientCallStatus();
 cltCallStatus.setStatus('NOTREADY');
-evKurentoClient.setClientCallStatus(cltCallStatus);
-
 /**
 * New object to draw the clients list
 */
@@ -43,7 +41,7 @@ const evClients = new EvClients();
 * It connects to websocket and webrtc signaling server.
 */
 //const mainSocket = io('https://192.168.1.6:8443');
-const mainSocket = io('https://192.168.1.17:8443');
+const mainSocket = io('https://192.168.1.10:8443');
 /**
 *	It defines the identity object
 */
@@ -52,28 +50,29 @@ const cltIdentity = new EvClientIdentity();
 * This is a javascript plain object to 
 * pass to kurentoUtils.WebRtcPeer as constructor parameter 
 */
-let webRtcPeerOptions = {
-	localVideo: document.getElementById('vOwn'),
-	remoteVideo: document.getElementById('vForeign'),
-		
-	mediaConstraints:{
-		audio : true,
-		video : true,
-	},
-    configuration : {
-           "iceServers": [{
-               'username': 'ejvturn',
-               'url': 'turn:turn100.sientifica.com:5349',
-               'credential': '7235bdM235'
-           }],
-           "iceTransportPolicy": "relay"  //stun wont be used
-	}
+
+let localVideoDisplay = document.getElementById('vOwn');
+let remoteVideoDisplay = document.getElementById('vForeign');
+let localStream = {};
+
+const pcConfiguration = {
 	
+	"iceServers": [{
+	   'username': 'ejvturn',
+	   'urls': ['turn:turn100.sientifica.com:5349'],
+	   'credential': '7235bdM235'
+	}],
+	//"iceTransportPolicy": "relay"  //stun wont be used
 }
 /**
 * It defines de callee user ID
 */
 let calleeId = '';
+
+/*
+*
+*/
+let pc = {};
 
 /**
 *	It defines handlers for messages coming from websocket server
@@ -106,54 +105,92 @@ wssMsgHandler.subscribeToEvents('all clients',(data)=>{
 	WebRTC connection related event handlers
 */
 wssMsgHandler.subscribeToEvents('rejectedcall',(data)=>{
-	evKurentoClient.onRejectedCall(data,(error,data)=>{
-		console.log(data);
-	});
+	let callee = evClients.getClientByUID(data.calleeId);
+	alert(`Call request rejected by ${callee.name}`);
+	pc = {};
+	cltCallStatus.setStatus('READYY');
+
 });
 wssMsgHandler.subscribeToEvents('incomingcall',(data)=>{
-	evKurentoClient.onIncomingCall(data.callerId,data.sdpOffer,(response)=>{
-		if (response.error){
-			console.log("Error responding to incoming call request");
-			console.log(`${response.msg}`);
-			return false;
-		}
-		else{
-			console.log("Response for incoming call request has sent ok");
-			console.log(`${response.msg}`);
-			return true;
-		}
+
+	if (cltCallStatus.getStatus()!='READY'){
+
+		let fullStatus = cltCallStatus.getFullStatus();
+		mainSocket.emit("message",{
+			topic: 'rejectedCall',
+			info:{
+				callerId: data.callerId,
+				calleeId: data.calleeId,
+				msg: fullStatus.msg
+			}
+		});
+		console.log("Incoming call rejected by busy status");
+		return false;
+	}
+
+	let caller = evClients.getClientByUID(data.callerId);
+	if (!confirm(`User ${caller.name} is calling...`)){
+
+		console.log(err);
+		mainSocket.emit("message",{
+			topic: 'rejectedCall',
+			info:{
+				callerId: data.callerId,
+				calleeId: data.calleeId,
+				msg: 'Call rejected by user'
+			}
+		});
+		return false;
+
+	}
+	cltCallStatus.setStatus('BUSY');
+	pc = {};
+	pc = new RTCPeerConnection(pcConfiguration);
+	pc.onicecandidate = (event)=>{
+		console.log(event);
+	}
+	/*
+		It captures local media
+	*/
+	navigator.mediaDevices.getUserMedia({ audio: 1, video: 1 }).then((stream)=>{
+		localStream = stream;
+		localVideoDisplay.srcObject = localStream;
+		localStream.getTracks().forEach((t) => pc.addTrack(t, localStream));
+		return pc.setRemoteDescription(new RTCSessionDescription(data.sdpOffer));
+	}).then(()=>{
+		console.log(`Creating the sdp answer...`);
+		return pc.createAnswer();
+	}).then((sdpAnswer)=>{
+		console.log(`Answering ok to calling request...`);
+		mainSocket.emit("message",{
+			topic: 'callResponse',
+			info:{
+				callerId: data.callerId,
+				calleeId: data.calleeId,
+				sdpAnswer: sdpAnswer
+			}
+		});
+	}).catch((err)=>{
+
+		console.log(err);
+		mainSocket.emit("message",{
+			topic: 'rejectedCall',
+			info:{
+				callerId: data.callerId,
+				calleeId: data.calleeId,
+				msg: err
+			}
+		});
 	});
+
+
 });
-wssMsgHandler.subscribeToEvents('startcomunication',(data)=>{
-	evKurentoClient.onStartCommunication(data.sdpAnswer,(error)=>{
-		if (error){
-			console.log("Failed starting communication");
-		}
-		else{
-			console.log("Starting communication...");	
-		}
-	});
+wssMsgHandler.subscribeToEvents('callresponser',(data)=>{
 });
 wssMsgHandler.subscribeToEvents('icecandidate',(data)=>{
-
-	evKurentoClient.onRemoteIceCandidate(data.candidate,(error)=>{
-		if (error){
-			console.log("Failing adding remote ICE Candidate");
-		}
-		else{
-			console.log("Remote ICE Candidate added successfully");	
-		}
-	});
-
 })
-
 wssMsgHandler.subscribeToEvents('hangup',(data)=>{
-
-	evKurentoClient.stopCall((response)=>{ console.log(response);});
-
 })
-
-
 
 /**
 * It instantiates an object to handle the prompt for nickname
@@ -165,13 +202,7 @@ const evNickSetter = new EvClientNickNameSetter();
 */
 mainSocket.on("message",(data)=>{
 	wssMsgHandler.onMesage(data);
-})
-/**
-* Set some elements of the EvKurentoClient module
-*/
-evKurentoClient.setSocket(mainSocket);//Add Socket to EvKurentoClient
-evKurentoClient.setCltIdentity(cltIdentity);//Add identity to EvKurentoClient
-evKurentoClient.setClientsList(evClients);
+});
 /*
 
 	Code to run after document is ready
@@ -189,9 +220,7 @@ $(document).ready(()=>{
 		name:cltIdentity.name,
 		socketid:mainSocket.id
 	});
-
 	cltCallStatus.setStatus('READY');
-
 	/*
 	
 		Buttons onclick handlers
@@ -200,24 +229,26 @@ $(document).ready(()=>{
 	const btnStart = document.querySelector("button[class='controls__start']");
 	const btnCall = document.querySelector("button[class='controls__call']");
 	const btnStop = document.querySelector("button[class='controls__stop']");
-	
-
 	btnStart.addEventListener("click",(e)=>{
-		evKurentoClient.startLocal(webRtcPeerOptions,(error,webRtcPeer)=>{
-			if (error){
-				console.log("- webrtc.js:240");
-				console.log(error);
-			}
-			else{
-				console.log("- webrtc.js:244");
-				console.log("Success creating WebRTCPeer object...");	
-				console.log(webRtcPeer);
-				
-			}
+
+		pc = {};
+		pc = new RTCPeerConnection(pcConfiguration);
+		pc.onicecandidate = (event)=>{
+			console.log(event);
+		}
+		/*
+			It captures local media
+		*/
+		navigator.mediaDevices.getUserMedia({ audio: 1, video: 1 }).then((stream)=>{
+			localStream = stream;
+			localVideoDisplay.srcObject = localStream;
+			localStream.getTracks().forEach((t) => pc.addTrack(t, localStream));
+		}).catch((err)=>{
+			console.log(err);
 		});
+		
 	});
-
-
+	
 	btnCall.addEventListener("click",(e)=>{
 
 		let fullStatus = cltCallStatus.getFullStatus();
@@ -237,41 +268,43 @@ $(document).ready(()=>{
 			return false;
 		}
 
+		/*
+			It generates sdp offer
+		*/
+		if (pc.constructor.name == 'RTCPeerConnection'){
 
-		evKurentoClient.createSdpOffer((error,sdpOffer)=>{
-			
-			if (error){
-				console.log("- webrtc.js:171");
-				console.log(error);
-			}
-			else{
-				console.log("- webrtc.js:175");
-				console.log("Success creating sdpOffer object...");	
-				//console.log(sdpOffer);
-				/* It makes the call to callee */
-				//evKurentoClient.call(cltIdentity,);
-				evKurentoClient.call(callee,sdpOffer,(error)=>{
-					if (error.error){
-						console.log(`Error!: ${error.msg}`);
-					}
-					else{
-						console.log(`Success!: ${error.msg}`);
-					}
+			pc.createOffer().then((rtcOfferObj)=>{
 
-				});
-			}
-		});
+				let wssMsgObj = {
+					topic: 'call',
+					info: {
+						callerId: cltIdentity.uid,
+						calleeId: calleeId,
+						sdpOffer:rtcOfferObj
+					}
+				};
+				mainSocket.emit("message",wssMsgObj);
+				console.log(`Sending to signaling server sdp offer ${wssMsgObj}`);
+
+			}).catch((err)=>{
+				console.log(err);
+			})
+		}
+		else{
+			alert("Please click on Start button first");
+			return false;
+		}
+		
+
+
 	});
 
 	btnStop.addEventListener("click",(e)=>{
-		evKurentoClient.stopCall((response)=>{ console.log(response);});
-		let msgObj = {
-			topic: 'hangup',
-			info: {
-				uid: cltIdentity.uid
-			}
-		}
-		mainSocket.emit("message",msgObj)
+
+		localVideoDisplay.srcObject = null;
+		localStream = {};
+		pc = {};
+		
 	});
 	
 });

@@ -13,6 +13,7 @@ class WebRtcSignalingServer{
 		this.evKurentoClt = evKurentoClt;
 		this.cltRegistry = evKurentoClientRegistry;
 		this.sdpOffers = {};
+		this.sdpAnswers = {};
 		this.icecandidates = {};
 		this.pipelines = {};
 		this.kc = {};
@@ -204,6 +205,7 @@ class WebRtcSignalingServer{
 			type: 'incomingcall',
 			code: 200,
 			callerId: callerId,
+			sdpOffer: sdpOffer
 		}
 		this.wss.emmitMessageToSingleSocket ('message',msgObj,callee.socketid);
 
@@ -212,7 +214,7 @@ class WebRtcSignalingServer{
 
 	responseCall(data){
 
-		let sdpOffer = data.sdpOffer;
+		let sdpAnswer = data.sdpAnswer;
 		let caller = this.cltRegistry.getClientByUid(data.callerId);
 		let callee = this.cltRegistry.getClientByUid(data.calleeId);
 		let msgObj = {};
@@ -220,57 +222,20 @@ class WebRtcSignalingServer{
 		/*
 			Saves the sdpOffer sent by callee
 		*/
-		this.sdpOffers[data.calleeId] = sdpOffer;
-		//1. It creates a new MediaPipeline Kurento Client
-		pl = this.evKurentoPLFactory.createPipeline(data.plType,this.evKurentoClt,this.wss);
-		pl.setCaller(caller);
-		pl.setCallee(callee);
-		pl.setIceCandidates(this.icecandidates);
-		pl.setSdpOffers(this.sdpOffers);
-		pl.startPipeline((error,pl)=>{
-			if(error){
-				console.log(error);
-				return false;
-			}
-			pl.generateSdpAnswer(caller.uid,(error,callerSdpAnswer)=>{
-				if (error){
+		this.sdpAnswers[data.calleeId] = sdpAnswer;
+		console.log(`SDP Answer by ${data.calleeId} `,sdpAnswer);
 
-					console.log("Error creating sdpAnswer for caller...");
-					console.log(error);
-					return error;
-				}
-				console.log("callerSdpAnswer");
-				console.log(callerSdpAnswer);
-				pl.generateSdpAnswer(callee.uid,(error,calleeSdpAnswer)=>{
-					if(error){
-
-						console.log("Error creating sdpAnswer for callee...");
-						console.log(error);
-						return error;
-					}
-					console.log("calleeSdpAnswer");
-					console.log(calleeSdpAnswer);
-					//2. It sends to clients the notification to start the comunication
-					msgObj ={
-						type: 'startcomunication',
-						code: 200,
-						sdpAnswer: callerSdpAnswer
-					}
-					this.wss.emmitMessageToSingleSocket ('message',msgObj,caller.socketid);
-
-					msgObj ={
-						type: 'startcomunication',
-						code: 200,
-						sdpAnswer: calleeSdpAnswer
-					}
-					this.wss.emmitMessageToSingleSocket ('message',msgObj,callee.socketid);
-
-				});
-			});
-		});
-		this.pipelines[data.calleeId] = pl;
-		this.pipelines[data.callerId] = pl;
-		//2. 
+		/*
+			Sending sdp answer to caller
+		*/
+		console.log(`Sending call answer to caller ${caller.uid}`);
+		let msgObj ={
+			type: 'incomingcall',
+			code: 200,
+			callerId: callerId,
+			sdpAnswer: sdpAnswer
+		}
+		this.wss.emmitMessageToSingleSocket ('message',msgObj,caller.socketid);
 		
 
 	}
@@ -281,17 +246,9 @@ class WebRtcSignalingServer{
 		let caller = this.cltRegistry.getClientByUid(data.callerId);
 		let callee = this.cltRegistry.getClientByUid(data.calleeId);
 		//It cleans the sdpOffer sent by caller
-		console.log("sdpOffers 1");
-		console.log(this.sdpOffers);
 		this.sdpOffers[data.callerId] = null;
-		console.log("sdpOffers 2");
-		console.log(this.sdpOffers);
 		Reflect.deleteProperty(this.sdpOffers,data.callerId);
-		console.log("sdpOffers 3");
-		console.log(this.sdpOffers);
 		delete this.sdpOffers[data.callerId];
-		console.log("sdpOffers 4");
-		console.log(this.sdpOffers);
 
 		console.log(`Sending call rejection to caller ${caller.uid}, error: ${data.msg}`);
 		let msgObj ={
